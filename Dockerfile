@@ -5,7 +5,7 @@ FROM python:3.9-slim
 # Set the working directory in the container
 WORKDIR /app
 
-# Copy the requirements file into the container at /app
+# Copy the requirements file first to leverage Docker cache
 COPY requirements.txt .
 
 # Install any needed packages specified in requirements.txt
@@ -13,29 +13,41 @@ COPY requirements.txt .
 # --compile: Compiles Python source files to bytecode, can slightly improve startup.
 RUN pip install --no-cache-dir --compile -r requirements.txt
 
-# Copy the current directory contents into the container at /app
-# This includes your Google_Sheets_Agent.py file and any other necessary files.
-COPY . .
+# Copy the application code into the container at /app
+# This includes your main application file and the agent/blueprint files.
+COPY Google_Suite.py .
+COPY Google_Sheets_Agent.py .
+COPY Google_Docs_Agent.py .
+# If you create any shared utility files (e.g., shared_utils.py), copy them too:
+# COPY shared_utils.py .
 
-# Make port 5000 available to the world outside this container (Gunicorn will bind to this)
-EXPOSE 5000
+# Expose the port that Gunicorn will listen on.
+# Your serverless platform or container orchestrator will map this to an external port/URL.
+# The actual port number used by Gunicorn inside the container is often set by the $PORT env var.
+EXPOSE 8080 # Common default, but Gunicorn command below might use $PORT
 
-# Define environment variable for the Google Client Secret
-# IMPORTANT: For production, it's strongly recommended to pass this
-# as an environment variable at runtime (e.g., `docker run -e GOOGLE_CLIENT_SECRET=...`)
-# or use a secrets management system, rather than hardcoding it in the Dockerfile.
-# The value below is just a placeholder based on your previous example.
+# Define environment variable for the Google Client Secret.
+# CRITICAL: This value MUST be provided by your serverless environment or
+# container runtime configuration for production. The value here is a placeholder.
 ENV GOOGLE_CLIENT_SECRET="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"
 
-# Command to run the application using Gunicorn
-# --bind 0.0.0.0:5000 : Listen on all interfaces, port 5000
-# --workers 2 : Number of worker processes (adjust as needed, e.g., 2 * num_cores + 1)
-# --threads 4 : Number of threads per worker (adjust as needed)
-# --timeout 120 : Worker timeout in seconds. Important for potentially long API calls.
-# Google_Sheets_Agent:app : Tells Gunicorn to run the 'app' Flask instance
-#                      from the 'Google_Sheets_Agent.py' file.
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--threads", "4", "--timeout", "120", "Google_Sheets_Agent:app"]
+# Define environment variable for the port Gunicorn should listen on.
+# Many serverless platforms (like Cloud Run, Heroku, etc.) set this automatically.
+# Gunicorn will bind to 0.0.0.0:$PORT.
+ENV PORT=8080
 
-# If you wanted to fall back to the Flask development server (NOT for production):
-# This assumes your Python file is Google_Sheets_Agent.py
-# CMD ["python", "Google_Sheets_Agent.py"]
+# Command to run the application using Gunicorn.
+# It targets the 'app' Flask instance within your 'Google_Suite.py' file.
+# --bind 0.0.0.0:$PORT : Listen on all interfaces, on the port specified by the PORT env var.
+# --workers 1 : Common for serverless environments where you scale by instance count. Adjust if needed.
+# --threads 4 : Number of threads per worker.
+# --timeout 120 : Worker timeout in seconds.
+# --access-logfile '-' : Log access to stdout.
+# --error-logfile '-' : Log errors to stderr.
+# These logs will be picked up by your serverless platform's logging system.
+CMD ["gunicorn", "--bind", "0.0.0.0:$PORT", "--workers", "1", "--threads", "4", "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-", "Google_Suite:app"]
+
+# --- Alternative CMD for local Docker testing if $PORT isn't set ---
+# If you were running `docker run` locally and didn't set the PORT env var,
+# you might have a CMD like this, but the one above is more standard for serverless.
+# CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "4", "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-", "Google_Suite:app"]
