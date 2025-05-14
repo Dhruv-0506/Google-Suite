@@ -9,60 +9,13 @@ from google.oauth2.credentials import Credentials as OAuthCredentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-# Import the centralized function for specific user tokens from shared_utils
-from shared_utils import get_global_specific_user_access_token
+# Import shared helper functions
+from shared_utils import get_access_token, get_global_specific_user_access_token
 
 logger = logging.getLogger(__name__)
 docs_bp = Blueprint('docs_agent', __name__, url_prefix='/docs')
 
-# --- REMOVED Module-Level Configurations ---
-# --- REMOVED exchange_code_for_tokens function ---
-
-# --- get_access_token uses current_app.config and passed parameters ---
-def get_access_token(refresh_token, client_id, client_secret):
-    logger.info(f"Docs Agent: Getting access token for refresh token: {refresh_token[:10]}...")
-    start_time = time.time()
-    if not client_secret:
-        logger.error("CRITICAL: Client secret not available for token refresh (Docs Agent).")
-        raise ValueError("Client secret not available.")
-
-    token_url = current_app.config.get('TOKEN_URL')
-    request_timeout = current_app.config.get('REQUEST_TIMEOUT_SECONDS', 30)
-
-    if not token_url:
-        logger.error("CRITICAL: TOKEN_URL not configured in the application.")
-        raise ValueError("TOKEN_URL not configured.")
-
-    payload = {
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "refresh_token": refresh_token,
-        "grant_type": "refresh_token"
-    }
-    logger.debug(f"Token refresh payload (secrets redacted): { {k: (v if k not in ['client_secret', 'refresh_token'] else '...') for k,v in payload.items()} }")
-    try:
-        response = requests.post(token_url, data=payload, timeout=request_timeout)
-        response.raise_for_status()
-        token_data = response.json()
-        access_token_val = token_data.get("access_token")
-        duration = time.time() - start_time
-        if access_token_val:
-            logger.info(f"Successfully obtained new access token via refresh in {duration:.2f} seconds. Expires in: {token_data.get('expires_in')}s")
-            return access_token_val
-        else:
-            logger.error(f"Token refresh response missing access_token after {duration:.2f}s. Response: {token_data}")
-            raise ValueError("Access token not found in refresh response.")
-    except requests.exceptions.HTTPError as e:
-        duration = time.time() - start_time
-        error_text = e.response.text if hasattr(e, 'response') and e.response else str(e)
-        logger.error(f"HTTPError ({e.response.status_code if hasattr(e, 'response') and e.response else 'Unknown'}) during token refresh after {duration:.2f} seconds: {error_text}", exc_info=True)
-        if "invalid_grant" in error_text: # Check error_text, not e.response.text directly if e.response might be None
-            logger.warning("Token refresh failed with 'invalid_grant'. Refresh token may be expired or revoked (ensure it has Docs API scope if new).")
-        raise
-    except requests.exceptions.Timeout:
-        duration = time.time() - start_time; logger.error(f"Timeout ({request_timeout}s) during token refresh after {duration:.2f} seconds."); raise
-    except Exception as e:
-        duration = time.time() - start_time; logger.error(f"Generic exception during token refresh after {duration:.2f} seconds: {str(e)}", exc_info=True); raise
+# --- REMOVED local get_access_token function; now imported from shared_utils ---
 
 def get_docs_service(access_token):
     logger.info("Building Google Docs API service object...")
@@ -71,7 +24,7 @@ def get_docs_service(access_token):
         raise ValueError("Access token is required to build docs service.")
     try:
         creds = OAuthCredentials(token=access_token)
-        service = build("docs", "v1", credentials=creds)
+        service = build("docs", "v1", credentials=creds, static_discovery=False) # Added static_discovery=False
         logger.info("Google Docs API service object built successfully.")
         return service
     except Exception as e:
@@ -173,13 +126,14 @@ def specific_user_token_docs_endpoint():
     endpoint_name = "/docs/token"
     logger.info(f"ENDPOINT {endpoint_name}: Request received.")
     try:
-        access_token = get_global_specific_user_access_token() # Imported from shared_utils
+        # Calls the centralized function imported from shared_utils.py
+        access_token = get_global_specific_user_access_token()
         logger.info(f"ENDPOINT {endpoint_name}: Successfully obtained access token for specific user.")
         return jsonify({"success": True, "access_token": access_token})
     except Exception as e:
         logger.error(f"ENDPOINT {endpoint_name}: Failed to get specific user access token: {str(e)}", exc_info=True)
         error_message = f"Failed to obtain access token: {str(e)}"
-        if isinstance(e, ValueError): # More specific error for config issues
+        if isinstance(e, ValueError):
             return jsonify({"success": False, "error": error_message}), 400
         return jsonify({"success": False, "error": error_message}), 500
 
@@ -258,8 +212,8 @@ def delete_range_endpoint(document_id):
             return jsonify({"success": False, "error": "Missing 'start_index', 'end_index', or 'refresh_token'"}), 400
         start_index = int(data['start_index']); end_index = int(data['end_index']); refresh_token = data['refresh_token']
         segment_id = data.get('segment_id') 
-        if start_index < 0 or end_index <= start_index: 
-            return jsonify({"success": False, "error": "Invalid 'start_index' or 'end_index'. Ensure 0 <= start_index < end_index."}), 400
+        if start_index < 0 or end_index <= start_index: # Docs API indices are generally 1-based for user-facing examples, but API uses 0-based. Content starts at 1 usually.
+            return jsonify({"success": False, "error": "Invalid 'start_index' or 'end_index'. Ensure 0 <= start_index < end_index for API."}), 400 # Corrected condition slightly
         
         access_token = get_access_token(
             refresh_token,
