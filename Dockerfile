@@ -24,7 +24,7 @@ COPY Google_Docs_Agent.py .
 # Expose the port that Gunicorn will listen on.
 # Your serverless platform or container orchestrator will map this to an external port/URL.
 # The actual port number used by Gunicorn inside the container is often set by the $PORT env var.
-EXPOSE 8080 # Common default, but Gunicorn command below might use $PORT
+EXPOSE 8080
 
 # Define environment variable for the Google Client Secret.
 # CRITICAL: This value MUST be provided by your serverless environment or
@@ -46,8 +46,3 @@ ENV PORT=8080
 # --error-logfile '-' : Log errors to stderr.
 # These logs will be picked up by your serverless platform's logging system.
 CMD ["gunicorn", "--bind", "0.0.0.0:$PORT", "--workers", "1", "--threads", "4", "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-", "Google_Suite:app"]
-
-# --- Alternative CMD for local Docker testing if $PORT isn't set ---
-# If you were running `docker run` locally and didn't set the PORT env var,
-# you might have a CMD like this, but the one above is more standard for serverless.
-# CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "4", "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-", "Google_Suite:app"]
