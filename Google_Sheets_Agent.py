@@ -1,7 +1,7 @@
 from flask import jsonify, request, Blueprint, current_app
 import logging
 import time
-import os
+# os import is no longer needed here if all config comes from current_app
 import requests # Kept for get_access_token
 
 # Imports for Google API
@@ -9,18 +9,14 @@ from google.oauth2.credentials import Credentials as OAuthCredentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-# Import the centralized function for specific user tokens
-from Google_Suite import get_global_specific_user_access_token
+# Import the centralized function for specific user tokens from shared_utils
+from shared_utils import get_global_specific_user_access_token
 
 logger = logging.getLogger(__name__)
 sheets_bp = Blueprint('sheets_agent', __name__, url_prefix='/sheets')
 
 # --- REMOVED Module-Level Configurations ---
-# CLIENT_ID, CLIENT_SECRET, TOKEN_URL, REDIRECT_URI, REQUEST_TIMEOUT_SECONDS
-# These will now be accessed via current_app.config from Google_Suite.py
-
 # --- REMOVED exchange_code_for_tokens function ---
-# This is handled by exchange_code_for_tokens_global in Google_Suite.py
 
 # --- get_access_token uses current_app.config and passed parameters ---
 def get_access_token(refresh_token, client_id, client_secret):
@@ -30,7 +26,6 @@ def get_access_token(refresh_token, client_id, client_secret):
         logger.error("CRITICAL: Client secret not available for token refresh (Sheets Agent).")
         raise ValueError("Client secret not available.")
     
-    # Get configuration from the current Flask app context
     token_url = current_app.config.get('TOKEN_URL')
     request_timeout = current_app.config.get('REQUEST_TIMEOUT_SECONDS', 30)
 
@@ -57,20 +52,19 @@ def get_access_token(refresh_token, client_id, client_secret):
         else:
             logger.error(f"Token refresh response missing access_token after {duration:.2f}s. Response: {token_data}")
             raise ValueError("Access token not found in refresh response.")
-    except requests.exceptions.Timeout:
-        duration = time.time() - start_time
-        logger.error(f"Timeout ({request_timeout}s) during token refresh after {duration:.2f} seconds.")
-        raise
     except requests.exceptions.HTTPError as e:
+        # ... (existing error handling for get_access_token)
         duration = time.time() - start_time
-        logger.error(f"HTTPError ({e.response.status_code}) during token refresh after {duration:.2f} seconds: {e.response.text if e.response else str(e)}")
-        if "invalid_grant" in (e.response.text if e.response else ""):
+        error_text = e.response.text if hasattr(e, 'response') and e.response else str(e)
+        logger.error(f"HTTPError ({e.response.status_code if hasattr(e, 'response') and e.response else 'Unknown'}) during token refresh after {duration:.2f} seconds: {error_text}", exc_info=True)
+        if "invalid_grant" in error_text:
             logger.warning("Token refresh failed with 'invalid_grant'. Refresh token may be expired or revoked.")
         raise
+    except requests.exceptions.Timeout:
+        duration = time.time() - start_time; logger.error(f"Timeout ({request_timeout}s) during token refresh after {duration:.2f} seconds."); raise
     except Exception as e:
-        duration = time.time() - start_time
-        logger.error(f"Generic exception during token refresh after {duration:.2f} seconds: {str(e)}", exc_info=True)
-        raise
+        duration = time.time() - start_time; logger.error(f"Generic exception during token refresh after {duration:.2f} seconds: {str(e)}", exc_info=True); raise
+
 
 def get_sheets_service(access_token):
     logger.info("Building Google Sheets API service object...")
@@ -86,7 +80,7 @@ def get_sheets_service(access_token):
         logger.error(f"Failed to build Google Sheets API service object: {str(e)}", exc_info=True)
         raise
 
-# --- Google Sheets API Wrapper Functions (No changes to internal logic) ---
+# --- Google Sheets API Wrapper Functions (No changes to internal logic needed here) ---
 def api_update_cell(service, spreadsheet_id, cell_range, new_value, value_input_option="USER_ENTERED"):
     logger.info(f"API: Updating cell '{cell_range}' in sheet '{spreadsheet_id}' to '{new_value}' with option '{value_input_option}'.")
     start_time = time.time()
@@ -96,7 +90,7 @@ def api_update_cell(service, spreadsheet_id, cell_range, new_value, value_input_
             spreadsheetId=spreadsheet_id, range=cell_range, valueInputOption=value_input_option, body=body
         ).execute()
         duration = time.time() - start_time; logger.info(f"API: Cell update successful in {duration:.2f}s. Result: {result}"); return result
-    except HttpError as e: duration = time.time() - start_time; error_content = e.content.decode('utf-8') if e.content else str(e); logger.error(f"API: HttpError updating cell after {duration:.2f}s: {error_content}", exc_info=True); raise
+    except HttpError as e: duration = time.time() - start_time; error_content = e.content.decode('utf-8') if hasattr(e,'content') and e.content else str(e); logger.error(f"API: HttpError updating cell after {duration:.2f}s: {error_content}", exc_info=True); raise
     except Exception as e: duration = time.time() - start_time; logger.error(f"API: Generic error updating cell after {duration:.2f}s: {str(e)}", exc_info=True); raise
 
 def api_append_rows(service, spreadsheet_id, range_name, values_data, value_input_option="USER_ENTERED"):
@@ -109,7 +103,7 @@ def api_append_rows(service, spreadsheet_id, range_name, values_data, value_inpu
             spreadsheetId=spreadsheet_id, range=range_name, valueInputOption=value_input_option, insertDataOption="INSERT_ROWS", body=body
         ).execute()
         duration = time.time() - start_time; logger.info(f"API: Row append successful in {duration:.2f}s. Updates: {result.get('updates')}"); return result
-    except HttpError as e: duration = time.time() - start_time; error_content = e.content.decode('utf-8') if e.content else str(e); logger.error(f"API: HttpError appending rows after {duration:.2f}s: {error_content}", exc_info=True); raise
+    except HttpError as e: duration = time.time() - start_time; error_content = e.content.decode('utf-8') if hasattr(e,'content') and e.content else str(e); logger.error(f"API: HttpError appending rows after {duration:.2f}s: {error_content}", exc_info=True); raise
     except Exception as e: duration = time.time() - start_time; logger.error(f"API: Generic error appending rows after {duration:.2f}s: {str(e)}", exc_info=True); raise
 
 def api_delete_rows(service, spreadsheet_id, sheet_id, start_row_index, end_row_index):
@@ -120,7 +114,7 @@ def api_delete_rows(service, spreadsheet_id, sheet_id, start_row_index, end_row_
         body = {"requests": requests_body}
         result = service.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body=body).execute()
         duration = time.time() - start_time; logger.info(f"API: Row deletion successful in {duration:.2f}s. Result: {result}"); return result
-    except HttpError as e: duration = time.time() - start_time; error_content = e.content.decode('utf-8') if e.content else str(e); logger.error(f"API: HttpError deleting rows after {duration:.2f}s: {error_content}", exc_info=True); raise
+    except HttpError as e: duration = time.time() - start_time; error_content = e.content.decode('utf-8') if hasattr(e,'content') and e.content else str(e); logger.error(f"API: HttpError deleting rows after {duration:.2f}s: {error_content}", exc_info=True); raise
     except Exception as e: duration = time.time() - start_time; logger.error(f"API: Generic error deleting rows after {duration:.2f}s: {str(e)}", exc_info=True); raise
 
 def api_create_new_tab(service, spreadsheet_id, new_sheet_title):
@@ -134,7 +128,7 @@ def api_create_new_tab(service, spreadsheet_id, new_sheet_title):
         new_sheet_props = result.get('replies', [{}])[0].get('addSheet', {}).get('properties', {})
         logger.info(f"API: New tab creation successful in {duration:.2f}s. New sheet ID: {new_sheet_props.get('sheetId')}, Title: {new_sheet_props.get('title')}")
         return result
-    except HttpError as e: duration = time.time() - start_time; error_content = e.content.decode('utf-8') if e.content else str(e); logger.error(f"API: HttpError creating new tab after {duration:.2f}s: {error_content}", exc_info=True); raise
+    except HttpError as e: duration = time.time() - start_time; error_content = e.content.decode('utf-8') if hasattr(e,'content') and e.content else str(e); logger.error(f"API: HttpError creating new tab after {duration:.2f}s: {error_content}", exc_info=True); raise
     except Exception as e: duration = time.time() - start_time; logger.error(f"API: Generic error creating new tab after {duration:.2f}s: {str(e)}", exc_info=True); raise
 
 def api_clear_values(service, spreadsheet_id, range_name):
@@ -143,7 +137,7 @@ def api_clear_values(service, spreadsheet_id, range_name):
     try:
         result = service.spreadsheets().values().clear(spreadsheetId=spreadsheet_id, range=range_name, body={}).execute()
         duration = time.time() - start_time; logger.info(f"API: Values clear successful in {duration:.2f}s. Cleared range: {result.get('clearedRange')}"); return result
-    except HttpError as e: duration = time.time() - start_time; error_content = e.content.decode('utf-8') if e.content else str(e); logger.error(f"API: HttpError clearing values after {duration:.2f}s: {error_content}", exc_info=True); raise
+    except HttpError as e: duration = time.time() - start_time; error_content = e.content.decode('utf-8') if hasattr(e,'content') and e.content else str(e); logger.error(f"API: HttpError clearing values after {duration:.2f}s: {error_content}", exc_info=True); raise
     except Exception as e: duration = time.time() - start_time; logger.error(f"API: Generic error clearing values after {duration:.2f}s: {str(e)}", exc_info=True); raise
 
 def api_get_spreadsheet_metadata(service, spreadsheet_id):
@@ -152,34 +146,30 @@ def api_get_spreadsheet_metadata(service, spreadsheet_id):
     try:
         result = service.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="properties,sheets.properties").execute()
         duration = time.time() - start_time; logger.info(f"API: Metadata retrieval successful in {duration:.2f}s."); return result
-    except HttpError as e: duration = time.time() - start_time; error_content = e.content.decode('utf-8') if e.content else str(e); logger.error(f"API: HttpError getting metadata after {duration:.2f}s: {error_content}", exc_info=True); raise
+    except HttpError as e: duration = time.time() - start_time; error_content = e.content.decode('utf-8') if hasattr(e,'content') and e.content else str(e); logger.error(f"API: HttpError getting metadata after {duration:.2f}s: {error_content}", exc_info=True); raise
     except Exception as e: duration = time.time() - start_time; logger.error(f"API: Generic error getting metadata after {duration:.2f}s: {str(e)}", exc_info=True); raise
-
-# --- REMOVED local get_specific_user_access_token function ---
 
 # --- Flask Endpoints (on sheets_bp Blueprint) ---
 
-# --- REMOVED blueprint-specific /auth/callback endpoint ---
-# This is now handled by the global /auth/callback in Google_Suite.py
+# REMOVED: Blueprint-specific /auth/callback endpoint
+# REMOVED: Local get_specific_user_access_token function
 
 @sheets_bp.route('/token', methods=['GET'])
 def specific_user_token_sheets_endpoint():
     endpoint_name = "/sheets/token"
     logger.info(f"ENDPOINT {endpoint_name}: Request received.")
     try:
-        # Calls the centralized function imported from Google_Suite.py
-        access_token = get_global_specific_user_access_token()
+        access_token = get_global_specific_user_access_token() # Imported from shared_utils
         logger.info(f"ENDPOINT {endpoint_name}: Successfully obtained access token for specific user.")
         return jsonify({"success": True, "access_token": access_token})
     except Exception as e:
         logger.error(f"ENDPOINT {endpoint_name}: Failed to get specific user access token: {str(e)}", exc_info=True)
-        # It's good practice to return a 500 error for server-side issues
         error_message = f"Failed to obtain access token: {str(e)}"
-        if isinstance(e, ValueError): # More specific error if possible
+        if isinstance(e, ValueError):
             return jsonify({"success": False, "error": error_message}), 400
         return jsonify({"success": False, "error": error_message}), 500
 
-
+# All data manipulation endpoints now use current_app.config for CLIENT_ID and CLIENT_SECRET
 @sheets_bp.route('/<spreadsheet_id>/cell/update', methods=['POST'])
 def update_cell_endpoint(spreadsheet_id):
     endpoint_name = f"/sheets/{spreadsheet_id}/cell/update"; logger.info(f"ENDPOINT {endpoint_name}: Request received.")
@@ -198,7 +188,7 @@ def update_cell_endpoint(spreadsheet_id):
         service = get_sheets_service(access_token)
         result = api_update_cell(service, spreadsheet_id, cell_range, new_value, value_input_option)
         return jsonify({"success": True, "message": "Cell updated successfully.", "details": result})
-    except HttpError as e: error_content = e.content.decode('utf-8') if e.content else str(e); status = e.resp.status if hasattr(e, 'resp') else 500; logger.error(f"ENDPOINT {endpoint_name}: Google API HttpError: {error_content}", exc_info=True); return jsonify({"success": False, "error": "Google API Error", "details": error_content}), status
+    except HttpError as e: error_content = e.content.decode('utf-8') if hasattr(e,'content') and e.content else str(e); status = e.resp.status if hasattr(e, 'resp') else 500; logger.error(f"ENDPOINT {endpoint_name}: Google API HttpError: {error_content}", exc_info=True); return jsonify({"success": False, "error": "Google API Error", "details": error_content}), status
     except ValueError as ve: logger.error(f"ENDPOINT {endpoint_name}: Value error: {str(ve)}", exc_info=True); return jsonify({"success": False, "error": str(ve)}), 400
     except Exception as e: logger.error(f"ENDPOINT {endpoint_name}: Generic exception: {str(e)}", exc_info=True); return jsonify({"success": False, "error": f"An unexpected error occurred: {str(e)}"}), 500
 
@@ -222,7 +212,7 @@ def append_rows_endpoint(spreadsheet_id):
         service = get_sheets_service(access_token)
         result = api_append_rows(service, spreadsheet_id, range_name, values_data, value_input_option)
         return jsonify({"success": True, "message": "Rows appended successfully.", "details": result.get("updates")})
-    except HttpError as e: error_content = e.content.decode('utf-8') if e.content else str(e); status = e.resp.status if hasattr(e, 'resp') else 500; logger.error(f"ENDPOINT {endpoint_name}: Google API HttpError: {error_content}", exc_info=True); return jsonify({"success": False, "error": "Google API Error", "details": error_content}), status
+    except HttpError as e: error_content = e.content.decode('utf-8') if hasattr(e,'content') and e.content else str(e); status = e.resp.status if hasattr(e, 'resp') else 500; logger.error(f"ENDPOINT {endpoint_name}: Google API HttpError: {error_content}", exc_info=True); return jsonify({"success": False, "error": "Google API Error", "details": error_content}), status
     except ValueError as ve: logger.error(f"ENDPOINT {endpoint_name}: Value error: {str(ve)}", exc_info=True); return jsonify({"success": False, "error": str(ve)}), 400
     except Exception as e: logger.error(f"ENDPOINT {endpoint_name}: Generic exception: {str(e)}", exc_info=True); return jsonify({"success": False, "error": f"An unexpected error occurred: {str(e)}"}), 500
 
@@ -246,7 +236,7 @@ def delete_rows_endpoint(spreadsheet_id):
         result = api_delete_rows(service, spreadsheet_id, sheet_id, start_row_index, end_row_index)
         return jsonify({"success": True, "message": "Row deletion request processed.", "details": result})
     except ValueError: return jsonify({"success": False, "error": "sheet_id, start_row_index, and end_row_index must be integers."}), 400
-    except HttpError as e: error_content = e.content.decode('utf-8') if e.content else str(e); status = e.resp.status if hasattr(e, 'resp') else 500; logger.error(f"ENDPOINT {endpoint_name}: Google API HttpError: {error_content}", exc_info=True); return jsonify({"success": False, "error": "Google API Error", "details": error_content}), status
+    except HttpError as e: error_content = e.content.decode('utf-8') if hasattr(e,'content') and e.content else str(e); status = e.resp.status if hasattr(e, 'resp') else 500; logger.error(f"ENDPOINT {endpoint_name}: Google API HttpError: {error_content}", exc_info=True); return jsonify({"success": False, "error": "Google API Error", "details": error_content}), status
     except Exception as e: logger.error(f"ENDPOINT {endpoint_name}: Generic exception: {str(e)}", exc_info=True); return jsonify({"success": False, "error": f"An unexpected error occurred: {str(e)}"}), 500
 
 @sheets_bp.route('/<spreadsheet_id>/tabs/create', methods=['POST'])
@@ -267,7 +257,7 @@ def create_tab_endpoint(spreadsheet_id):
         result = api_create_new_tab(service, spreadsheet_id, new_sheet_title)
         new_sheet_props = result.get('replies', [{}])[0].get('addSheet', {}).get('properties', {})
         return jsonify({"success": True, "message": "New tab/sheet created successfully.", "new_sheet_properties": new_sheet_props})
-    except HttpError as e: error_content = e.content.decode('utf-8') if e.content else str(e); status = e.resp.status if hasattr(e, 'resp') else 500; logger.error(f"ENDPOINT {endpoint_name}: Google API HttpError: {error_content}", exc_info=True); return jsonify({"success": False, "error": "Google API Error", "details": error_content}), status
+    except HttpError as e: error_content = e.content.decode('utf-8') if hasattr(e,'content') and e.content else str(e); status = e.resp.status if hasattr(e, 'resp') else 500; logger.error(f"ENDPOINT {endpoint_name}: Google API HttpError: {error_content}", exc_info=True); return jsonify({"success": False, "error": "Google API Error", "details": error_content}), status
     except ValueError as ve: logger.error(f"ENDPOINT {endpoint_name}: Value error: {str(ve)}", exc_info=True); return jsonify({"success": False, "error": str(ve)}), 400
     except Exception as e: logger.error(f"ENDPOINT {endpoint_name}: Generic exception: {str(e)}", exc_info=True); return jsonify({"success": False, "error": f"An unexpected error occurred: {str(e)}"}), 500
 
@@ -288,7 +278,7 @@ def clear_values_endpoint(spreadsheet_id):
         service = get_sheets_service(access_token)
         result = api_clear_values(service, spreadsheet_id, range_name)
         return jsonify({"success": True, "message": "Values cleared successfully.", "details": result})
-    except HttpError as e: error_content = e.content.decode('utf-8') if e.content else str(e); status = e.resp.status if hasattr(e, 'resp') else 500; logger.error(f"ENDPOINT {endpoint_name}: Google API HttpError: {error_content}", exc_info=True); return jsonify({"success": False, "error": "Google API Error", "details": error_content}), status
+    except HttpError as e: error_content = e.content.decode('utf-8') if hasattr(e,'content') and e.content else str(e); status = e.resp.status if hasattr(e, 'resp') else 500; logger.error(f"ENDPOINT {endpoint_name}: Google API HttpError: {error_content}", exc_info=True); return jsonify({"success": False, "error": "Google API Error", "details": error_content}), status
     except ValueError as ve: logger.error(f"ENDPOINT {endpoint_name}: Value error: {str(ve)}", exc_info=True); return jsonify({"success": False, "error": str(ve)}), 400
     except Exception as e: logger.error(f"ENDPOINT {endpoint_name}: Generic exception: {str(e)}", exc_info=True); return jsonify({"success": False, "error": f"An unexpected error occurred: {str(e)}"}), 500
 
@@ -309,12 +299,11 @@ def get_metadata_endpoint(spreadsheet_id):
         service = get_sheets_service(access_token)
         metadata = api_get_spreadsheet_metadata(service, spreadsheet_id)
         return jsonify({"success": True, "metadata": metadata})
-    except HttpError as e: error_content = e.content.decode('utf-8') if e.content else str(e); status = e.resp.status if hasattr(e, 'resp') else 500; logger.error(f"ENDPOINT {endpoint_name}: Google API HttpError: {error_content}", exc_info=True); return jsonify({"success": False, "error": "Google API Error", "details": error_content}), status
+    except HttpError as e: error_content = e.content.decode('utf-8') if hasattr(e,'content') and e.content else str(e); status = e.resp.status if hasattr(e, 'resp') else 500; logger.error(f"ENDPOINT {endpoint_name}: Google API HttpError: {error_content}", exc_info=True); return jsonify({"success": False, "error": "Google API Error", "details": error_content}), status
     except ValueError as ve: logger.error(f"ENDPOINT {endpoint_name}: Value error: {str(ve)}", exc_info=True); return jsonify({"success": False, "error": str(ve)}), 400
     except Exception as e: logger.error(f"ENDPOINT {endpoint_name}: Generic exception: {str(e)}", exc_info=True); return jsonify({"success": False, "error": f"An unexpected error occurred: {str(e)}"}), 500
 
 def get_sheet_id_by_name(service, spreadsheet_id, sheet_name):
-    # ... (No changes to internal logic, relies on passed service object)
     logger.info(f"Attempting to find sheetId for sheet name '{sheet_name}' in spreadsheet '{spreadsheet_id}'.")
     try:
         metadata = api_get_spreadsheet_metadata(service, spreadsheet_id)
@@ -331,7 +320,6 @@ def get_sheet_id_by_name(service, spreadsheet_id, sheet_name):
         logger.error(f"Error getting sheetId for sheet name '{sheet_name}': {str(e)}", exc_info=True)
         raise
 
-
 @sheets_bp.route('/<spreadsheet_id>/deduplicate', methods=['POST'])
 def deduplicate_sheet_rows_endpoint(spreadsheet_id):
     endpoint_name = f"/sheets/{spreadsheet_id}/deduplicate"; logger.info(f"ENDPOINT {endpoint_name}: Request received.")
@@ -344,7 +332,6 @@ def deduplicate_sheet_rows_endpoint(spreadsheet_id):
             return jsonify({"success": False, "error": f"Missing one or more required fields: {', '.join(required_fields)}"}), 400
 
         refresh_token = data['refresh_token']
-        # ... (rest of parameter extraction)
         key_column_indices = data['key_columns']
         sheet_name_param = data.get('sheet_name')
         sheet_id_param = data.get('sheet_id')
@@ -363,26 +350,21 @@ def deduplicate_sheet_rows_endpoint(spreadsheet_id):
         )
         service = get_sheets_service(access_token)
         
-        # --- The rest of the deduplication logic using 'service' object ---
         numeric_sheet_id = None
         sheet_identifier_for_get_api = None 
-
         if sheet_id_param is not None:
             try:
                 numeric_sheet_id = int(sheet_id_param)
                 metadata = api_get_spreadsheet_metadata(service, spreadsheet_id)
                 found_sheet = next((s['properties'] for s in metadata.get('sheets', []) if s['properties']['sheetId'] == numeric_sheet_id), None)
                 if not found_sheet:
-                    logger.error(f"Provided sheet_id {numeric_sheet_id} not found in spreadsheet.")
                     return jsonify({"success": False, "error": f"Sheet with ID {numeric_sheet_id} not found."}), 404
                 sheet_identifier_for_get_api = found_sheet['title']
             except ValueError:
-                logger.error(f"Invalid 'sheet_id' provided: {sheet_id_param}")
                 return jsonify({"success": False, "error": f"Invalid 'sheet_id': {sheet_id_param}. Must be an integer."}), 400
         elif sheet_name_param:
             numeric_sheet_id = get_sheet_id_by_name(service, spreadsheet_id, sheet_name_param)
             if numeric_sheet_id is None:
-                logger.error(f"Sheet name '{sheet_name_param}' not found.")
                 return jsonify({"success": False, "error": f"Sheet name '{sheet_name_param}' not found."}), 404
             sheet_identifier_for_get_api = sheet_name_param
         else: 
@@ -392,8 +374,7 @@ def deduplicate_sheet_rows_endpoint(spreadsheet_id):
         try:
             result = service.spreadsheets().values().get(spreadsheetId=spreadsheet_id, range=range_to_get).execute()
         except HttpError as he_get:
-            if he_get.resp.status == 400 and "Unable to parse range" in str(he_get):
-                 logger.warning(f"Could not parse range '{range_to_get}'. Trying to fetch just '{sheet_identifier_for_get_api}'.")
+            if hasattr(he_get, 'resp') and he_get.resp.status == 400 and "Unable to parse range" in str(he_get): # Check for resp
                  result = service.spreadsheets().values().get(spreadsheetId=spreadsheet_id, range=sheet_identifier_for_get_api).execute()
             else:
                 raise
@@ -401,28 +382,16 @@ def deduplicate_sheet_rows_endpoint(spreadsheet_id):
         if not all_rows_from_sheet:
             return jsonify({"success": True, "message": "Sheet is empty, no duplicates to remove.", "rows_deleted_count": 0})
 
-        data_rows_with_original_indices = []
-        for i, row_content in enumerate(all_rows_from_sheet):
-            if i >= header_rows_count:
-                data_rows_with_original_indices.append({'data': row_content, 'original_index_in_sheet': i})
-
+        data_rows_with_original_indices = [{'data': rc, 'original_index_in_sheet': i} for i, rc in enumerate(all_rows_from_sheet) if i >= header_rows_count]
         if not data_rows_with_original_indices:
             return jsonify({"success": True, "message": "No data rows to process after headers.", "rows_deleted_count": 0})
 
         seen_keys = {} 
         indices_to_delete_0_based = [] 
         max_key_col_index = max(key_column_indices)
-
         for row_info in data_rows_with_original_indices:
-            row_data = row_info['data']
-            current_original_index = row_info['original_index_in_sheet']
-            composite_key_parts = []
-            if len(row_data) <= max_key_col_index: 
-                for k_idx in key_column_indices:
-                    composite_key_parts.append(row_data[k_idx] if k_idx < len(row_data) else None)
-            else:
-                for k_idx in key_column_indices:
-                    composite_key_parts.append(row_data[k_idx])
+            row_data, current_original_index = row_info['data'], row_info['original_index_in_sheet']
+            composite_key_parts = [(row_data[k_idx] if k_idx < len(row_data) else None) for k_idx in key_column_indices]
             composite_key = tuple(composite_key_parts)
             if composite_key in seen_keys:
                 if keep_option == 'first': indices_to_delete_0_based.append(current_original_index)
@@ -435,14 +404,9 @@ def deduplicate_sheet_rows_endpoint(spreadsheet_id):
             return jsonify({"success": True, "message": "No duplicate rows found.", "rows_deleted_count": 0})
 
         indices_to_delete_0_based = sorted(list(set(indices_to_delete_0_based)), reverse=True)
-        delete_requests = []
-        for row_idx_to_delete in indices_to_delete_0_based:
-            delete_requests.append({
-                "deleteDimension": {"range": {"sheetId": numeric_sheet_id, "dimension": "ROWS", "startIndex": row_idx_to_delete, "endIndex": row_idx_to_delete + 1}}
-            })
+        delete_requests = [{"deleteDimension": {"range": {"sheetId": numeric_sheet_id, "dimension": "ROWS", "startIndex": idx, "endIndex": idx + 1}}} for idx in indices_to_delete_0_based]
         if delete_requests:
-            body = {"requests": delete_requests}
-            service.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body=body).execute()
+            service.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": delete_requests}).execute()
         
         return jsonify({
             "success": True, 
@@ -450,15 +414,8 @@ def deduplicate_sheet_rows_endpoint(spreadsheet_id):
             "rows_deleted_count": len(indices_to_delete_0_based),
             "deleted_row_indices_0_based": indices_to_delete_0_based
         })
+    except HttpError as e: error_content = e.content.decode('utf-8') if hasattr(e,'content') and e.content else str(e); status = e.resp.status if hasattr(e, 'resp') else 500; logger.error(f"ENDPOINT {endpoint_name}: Google API HttpError: {error_content}", exc_info=True); return jsonify({"success": False, "error": "Google API Error", "details": error_content}), status
+    except ValueError as ve: logger.error(f"ENDPOINT {endpoint_name}: Value error: {str(ve)}", exc_info=True); return jsonify({"success": False, "error": f"Invalid input value: {str(ve)}"}), 400
+    except Exception as e: logger.error(f"ENDPOINT {endpoint_name}: Generic exception: {str(e)}", exc_info=True); return jsonify({"success": False, "error": f"An unexpected error occurred: {str(e)}"}), 500
 
-    except HttpError as e:
-        error_content = e.content.decode('utf-8') if e.content else str(e)
-        status = e.resp.status if hasattr(e, 'resp') else 500
-        logger.error(f"ENDPOINT {endpoint_name}: Google API HttpError: {error_content}", exc_info=True)
-        return jsonify({"success": False, "error": "Google API Error", "details": error_content}), status
-    except ValueError as ve: # Catches int conversion errors for header_rows, sheet_id also
-        logger.error(f"ENDPOINT {endpoint_name}: Value error: {str(ve)}", exc_info=True)
-        return jsonify({"success": False, "error": f"Invalid input value: {str(ve)}"}), 400
-    except Exception as e:
-        logger.error(f"ENDPOINT {endpoint_name}: Generic exception: {str(e)}", exc_info=True)
-        return jsonify({"success": False, "error": f"An unexpected error occurred: {str(e)}"}), 500
+# REMOVED: if __name__ == "__main__": block
