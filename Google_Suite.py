@@ -27,7 +27,7 @@ app.config['UNIFIED_REDIRECT_URI'] = "https://serverless.on-demand.io/apps/googl
 
 # Configuration for a globally accessible "specific user" (e.g., for server-to-server type actions)
 # The blueprints' /token endpoints will call the get_global_specific_user_access_token function
-app.config['GLOBAL_SPECIFIC_USER_CLIENT_ID'] = "26763482887-q9lcln5nmb0setr60gkohdjrt2msl6o5.apps.googleusercontent.com"
+app.config['GLOBAL_SPECIFIC_USER_CLIENT_ID'] = "26763482887-coiufpukc1l69aaulaiov5o0u3en2del.apps.googleusercontent.com"
 app.config['GLOBAL_SPECIFIC_USER_REFRESH_TOKEN'] = "1//09qu30gV5_1hZCgYIARAAGAkSNwF-L9IrEOR20gZnhzmvcFcU46oN89TXt-Sf7ET2SAUwx7d9wo0E2E2ISkXw4CxCDDNxouGAVo4"
 
 
