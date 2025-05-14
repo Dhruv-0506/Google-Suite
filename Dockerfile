@@ -25,7 +25,7 @@ COPY Google_Sheets_Agent.py .
 COPY Google_Docs_Agent.py .
 COPY shared_utils.py .
 COPY Google_Drive_Agent.py .
-#COPY Google_Slides_Agent.py .
+COPY Google_Slides_Agent.py .
 #COPY Google_Calendar_Agent.py .
 #COPY Gmail_Agent.py .
 # If you have any other shared utility files or directories, copy them here:
