@@ -1,70 +1,20 @@
 from flask import jsonify, request, Blueprint, current_app
 import logging
 import time
-# os import is no longer needed here if all config comes from current_app
-import requests # Kept for get_access_token
+# No longer need 'os' or 'requests' directly at the module level if helpers are in shared_utils
 
 # Imports for Google API
 from google.oauth2.credentials import Credentials as OAuthCredentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-# Import the centralized function for specific user tokens from shared_utils
-from shared_utils import get_global_specific_user_access_token
+# Import shared helper functions
+from shared_utils import get_access_token, get_global_specific_user_access_token
 
 logger = logging.getLogger(__name__)
 sheets_bp = Blueprint('sheets_agent', __name__, url_prefix='/sheets')
 
-# --- REMOVED Module-Level Configurations ---
-# --- REMOVED exchange_code_for_tokens function ---
-
-# --- get_access_token uses current_app.config and passed parameters ---
-def get_access_token(refresh_token, client_id, client_secret):
-    logger.info(f"Sheets Agent: Getting access token for refresh token: {refresh_token[:10]}...")
-    start_time = time.time()
-    if not client_secret:
-        logger.error("CRITICAL: Client secret not available for token refresh (Sheets Agent).")
-        raise ValueError("Client secret not available.")
-    
-    token_url = current_app.config.get('TOKEN_URL')
-    request_timeout = current_app.config.get('REQUEST_TIMEOUT_SECONDS', 30)
-
-    if not token_url:
-        logger.error("CRITICAL: TOKEN_URL not configured in the application.")
-        raise ValueError("TOKEN_URL not configured.")
-
-    payload = {
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "refresh_token": refresh_token,
-        "grant_type": "refresh_token"
-    }
-    logger.debug(f"Token refresh payload (secrets redacted): { {k: (v if k not in ['client_secret', 'refresh_token'] else '...') for k,v in payload.items()} }")
-    try:
-        response = requests.post(token_url, data=payload, timeout=request_timeout)
-        response.raise_for_status()
-        token_data = response.json()
-        access_token_val = token_data.get("access_token")
-        duration = time.time() - start_time
-        if access_token_val:
-            logger.info(f"Successfully obtained new access token via refresh in {duration:.2f} seconds. Expires in: {token_data.get('expires_in')}s")
-            return access_token_val
-        else:
-            logger.error(f"Token refresh response missing access_token after {duration:.2f}s. Response: {token_data}")
-            raise ValueError("Access token not found in refresh response.")
-    except requests.exceptions.HTTPError as e:
-        # ... (existing error handling for get_access_token)
-        duration = time.time() - start_time
-        error_text = e.response.text if hasattr(e, 'response') and e.response else str(e)
-        logger.error(f"HTTPError ({e.response.status_code if hasattr(e, 'response') and e.response else 'Unknown'}) during token refresh after {duration:.2f} seconds: {error_text}", exc_info=True)
-        if "invalid_grant" in error_text:
-            logger.warning("Token refresh failed with 'invalid_grant'. Refresh token may be expired or revoked.")
-        raise
-    except requests.exceptions.Timeout:
-        duration = time.time() - start_time; logger.error(f"Timeout ({request_timeout}s) during token refresh after {duration:.2f} seconds."); raise
-    except Exception as e:
-        duration = time.time() - start_time; logger.error(f"Generic exception during token refresh after {duration:.2f} seconds: {str(e)}", exc_info=True); raise
-
+# --- REMOVED local get_access_token function; now imported from shared_utils ---
 
 def get_sheets_service(access_token):
     logger.info("Building Google Sheets API service object...")
@@ -73,7 +23,7 @@ def get_sheets_service(access_token):
         raise ValueError("Access token is required to build sheets service.")
     try:
         creds = OAuthCredentials(token=access_token)
-        service = build("sheets", "v4", credentials=creds)
+        service = build("sheets", "v4", credentials=creds, static_discovery=False) # Added static_discovery=False
         logger.info("Google Sheets API service object built successfully.")
         return service
     except Exception as e:
@@ -152,24 +102,24 @@ def api_get_spreadsheet_metadata(service, spreadsheet_id):
 # --- Flask Endpoints (on sheets_bp Blueprint) ---
 
 # REMOVED: Blueprint-specific /auth/callback endpoint
-# REMOVED: Local get_specific_user_access_token function
 
 @sheets_bp.route('/token', methods=['GET'])
 def specific_user_token_sheets_endpoint():
     endpoint_name = "/sheets/token"
     logger.info(f"ENDPOINT {endpoint_name}: Request received.")
     try:
-        access_token = get_global_specific_user_access_token() # Imported from shared_utils
+        # Calls the centralized function imported from shared_utils.py
+        # This function uses app.config values set in Google_Suite.py
+        access_token = get_global_specific_user_access_token()
         logger.info(f"ENDPOINT {endpoint_name}: Successfully obtained access token for specific user.")
         return jsonify({"success": True, "access_token": access_token})
     except Exception as e:
         logger.error(f"ENDPOINT {endpoint_name}: Failed to get specific user access token: {str(e)}", exc_info=True)
         error_message = f"Failed to obtain access token: {str(e)}"
-        if isinstance(e, ValueError):
+        if isinstance(e, ValueError): # More specific error for config issues
             return jsonify({"success": False, "error": error_message}), 400
         return jsonify({"success": False, "error": error_message}), 500
 
-# All data manipulation endpoints now use current_app.config for CLIENT_ID and CLIENT_SECRET
 @sheets_bp.route('/<spreadsheet_id>/cell/update', methods=['POST'])
 def update_cell_endpoint(spreadsheet_id):
     endpoint_name = f"/sheets/{spreadsheet_id}/cell/update"; logger.info(f"ENDPOINT {endpoint_name}: Request received.")
@@ -180,6 +130,7 @@ def update_cell_endpoint(spreadsheet_id):
         cell_range = data['cell_range']; new_value = data['new_value']; refresh_token = data['refresh_token']
         value_input_option = data.get('value_input_option', "USER_ENTERED")
         
+        # Uses imported get_access_token and global config
         access_token = get_access_token(
             refresh_token,
             current_app.config['CLIENT_ID'],
@@ -357,65 +308,44 @@ def deduplicate_sheet_rows_endpoint(spreadsheet_id):
                 numeric_sheet_id = int(sheet_id_param)
                 metadata = api_get_spreadsheet_metadata(service, spreadsheet_id)
                 found_sheet = next((s['properties'] for s in metadata.get('sheets', []) if s['properties']['sheetId'] == numeric_sheet_id), None)
-                if not found_sheet:
-                    return jsonify({"success": False, "error": f"Sheet with ID {numeric_sheet_id} not found."}), 404
+                if not found_sheet: return jsonify({"success": False, "error": f"Sheet with ID {numeric_sheet_id} not found."}), 404
                 sheet_identifier_for_get_api = found_sheet['title']
-            except ValueError:
-                return jsonify({"success": False, "error": f"Invalid 'sheet_id': {sheet_id_param}. Must be an integer."}), 400
+            except ValueError: return jsonify({"success": False, "error": f"Invalid 'sheet_id': {sheet_id_param}. Must be an integer."}), 400
         elif sheet_name_param:
             numeric_sheet_id = get_sheet_id_by_name(service, spreadsheet_id, sheet_name_param)
-            if numeric_sheet_id is None:
-                return jsonify({"success": False, "error": f"Sheet name '{sheet_name_param}' not found."}), 404
+            if numeric_sheet_id is None: return jsonify({"success": False, "error": f"Sheet name '{sheet_name_param}' not found."}), 404
             sheet_identifier_for_get_api = sheet_name_param
-        else: 
-            return jsonify({"success": False, "error": "Sheet identifier (name or id) is missing."}), 400
+        else: return jsonify({"success": False, "error": "Sheet identifier (name or id) is missing."}), 400
 
         range_to_get = f"'{sheet_identifier_for_get_api}'!A:ZZ" 
         try:
             result = service.spreadsheets().values().get(spreadsheetId=spreadsheet_id, range=range_to_get).execute()
         except HttpError as he_get:
-            if hasattr(he_get, 'resp') and he_get.resp.status == 400 and "Unable to parse range" in str(he_get): # Check for resp
+            if hasattr(he_get, 'resp') and he_get.resp.status == 400 and "Unable to parse range" in str(he_get):
                  result = service.spreadsheets().values().get(spreadsheetId=spreadsheet_id, range=sheet_identifier_for_get_api).execute()
-            else:
-                raise
+            else: raise
         all_rows_from_sheet = result.get('values', [])
-        if not all_rows_from_sheet:
-            return jsonify({"success": True, "message": "Sheet is empty, no duplicates to remove.", "rows_deleted_count": 0})
+        if not all_rows_from_sheet: return jsonify({"success": True, "message": "Sheet is empty, no duplicates to remove.", "rows_deleted_count": 0})
 
         data_rows_with_original_indices = [{'data': rc, 'original_index_in_sheet': i} for i, rc in enumerate(all_rows_from_sheet) if i >= header_rows_count]
-        if not data_rows_with_original_indices:
-            return jsonify({"success": True, "message": "No data rows to process after headers.", "rows_deleted_count": 0})
+        if not data_rows_with_original_indices: return jsonify({"success": True, "message": "No data rows to process after headers.", "rows_deleted_count": 0})
 
-        seen_keys = {} 
-        indices_to_delete_0_based = [] 
-        max_key_col_index = max(key_column_indices)
+        seen_keys = {}; indices_to_delete_0_based = []; max_key_col_index = max(key_column_indices)
         for row_info in data_rows_with_original_indices:
-            row_data, current_original_index = row_info['data'], row_info['original_index_in_sheet']
-            composite_key_parts = [(row_data[k_idx] if k_idx < len(row_data) else None) for k_idx in key_column_indices]
-            composite_key = tuple(composite_key_parts)
-            if composite_key in seen_keys:
-                if keep_option == 'first': indices_to_delete_0_based.append(current_original_index)
-                elif keep_option == 'last':
-                    indices_to_delete_0_based.append(seen_keys[composite_key]) 
-                    seen_keys[composite_key] = current_original_index 
-            else: seen_keys[composite_key] = current_original_index
-
-        if not indices_to_delete_0_based:
-            return jsonify({"success": True, "message": "No duplicate rows found.", "rows_deleted_count": 0})
-
-        indices_to_delete_0_based = sorted(list(set(indices_to_delete_0_based)), reverse=True)
-        delete_requests = [{"deleteDimension": {"range": {"sheetId": numeric_sheet_id, "dimension": "ROWS", "startIndex": idx, "endIndex": idx + 1}}} for idx in indices_to_delete_0_based]
-        if delete_requests:
-            service.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": delete_requests}).execute()
+            row_data, idx = row_info['data'], row_info['original_index_in_sheet']
+            key_parts = [(row_data[k_idx] if k_idx < len(row_data) else None) for k_idx in key_column_indices]
+            key = tuple(key_parts)
+            if key in seen_keys:
+                if keep_option == 'first': indices_to_delete_0_based.append(idx)
+                else: indices_to_delete_0_based.append(seen_keys[key]); seen_keys[key] = idx
+            else: seen_keys[key] = idx
         
-        return jsonify({
-            "success": True, 
-            "message": f"Deduplication complete. {len(indices_to_delete_0_based)} row(s) removed.",
-            "rows_deleted_count": len(indices_to_delete_0_based),
-            "deleted_row_indices_0_based": indices_to_delete_0_based
-        })
+        if not indices_to_delete_0_based: return jsonify({"success": True, "message": "No duplicate rows found.", "rows_deleted_count": 0})
+        indices_to_delete_0_based = sorted(list(set(indices_to_delete_0_based)), reverse=True)
+        delete_reqs = [{"deleteDimension": {"range": {"sheetId": numeric_sheet_id, "dimension": "ROWS", "startIndex": i, "endIndex": i + 1}}} for i in indices_to_delete_0_based]
+        if delete_reqs: service.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": delete_reqs}).execute()
+        
+        return jsonify({"success": True, "message": f"Deduplication complete. {len(indices_to_delete_0_based)} row(s) removed.", "rows_deleted_count": len(indices_to_delete_0_based), "deleted_row_indices_0_based": indices_to_delete_0_based})
     except HttpError as e: error_content = e.content.decode('utf-8') if hasattr(e,'content') and e.content else str(e); status = e.resp.status if hasattr(e, 'resp') else 500; logger.error(f"ENDPOINT {endpoint_name}: Google API HttpError: {error_content}", exc_info=True); return jsonify({"success": False, "error": "Google API Error", "details": error_content}), status
     except ValueError as ve: logger.error(f"ENDPOINT {endpoint_name}: Value error: {str(ve)}", exc_info=True); return jsonify({"success": False, "error": f"Invalid input value: {str(ve)}"}), 400
     except Exception as e: logger.error(f"ENDPOINT {endpoint_name}: Generic exception: {str(e)}", exc_info=True); return jsonify({"success": False, "error": f"An unexpected error occurred: {str(e)}"}), 500
-
-# REMOVED: if __name__ == "__main__": block
