@@ -23,6 +23,7 @@ RUN pip install --no-cache-dir --compile -r requirements.txt
 COPY Google_Suite.py .
 COPY Google_Sheets_Agent.py .
 COPY Google_Docs_Agent.py .
+COPY shared_utils.py .
 # If you have any other shared utility files or directories, copy them here:
 # Example: COPY shared_utils.py .
 
