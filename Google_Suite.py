@@ -10,6 +10,7 @@ from Google_Sheets_Agent import sheets_bp
 from Google_Docs_Agent import docs_bp
 from Google_Drive_Agent import drive_bp # Assuming this exists and is correctly set up
 from Chat_Agent_Blueprint import chat_bp # <<< NEWLY ADDED
+from Google_Calendar_Agent import calendar_bp
 # from Google_Slides_Agent import slides_bp # Example for future
 
 # Assuming shared_utils.py contains:
@@ -185,7 +186,8 @@ def auth_google():
         "docs": "https://www.googleapis.com/auth/documents",
         "drive": "https://www.googleapis.com/auth/drive",
         "slides": "https://www.googleapis.com/auth/presentations",
-        # "calendar": "https://www.googleapis.com/auth/calendar",
+        "calendar": "https://www.googleapis.com/auth/calendar.events",
+        
         # "gmail": "https://www.googleapis.com/auth/gmail.modify",
         # Add other service scopes here as you create agents for them
     }
@@ -231,7 +233,8 @@ all_blueprints = [
     sheets_bp,
     docs_bp,
     drive_bp,
-    chat_bp,     # Added chat blueprint
+    chat_bp, 
+    calendar_bp, 
     # slides_bp, # Uncomment when Google_Slides_Agent.py and slides_bp are created
 ]
 
