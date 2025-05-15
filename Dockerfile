@@ -1,8 +1,7 @@
 # Use an official Python runtime as a parent image
 FROM python:3.9-slim
 LABEL maintainer="your-name-or-email@example.com"
-LABEL description="Google Suite Agent for Sheets, Docs, Drive, Slides, and Chat." # Updated description
-
+LABEL description="Google Suite Agent for Sheets, Docs, Drive, Slides, and Chat." 
 # Set environment variables to make Python print out everything immediately
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -26,8 +25,8 @@ COPY Google_Docs_Agent.py .
 COPY shared_utils.py .
 COPY Google_Drive_Agent.py .
 COPY Google_Slides_Agent.py .
-COPY chat_agent_config.py .       # <<< ADDED THIS LINE
-COPY Chat_Agent_Blueprint.py .    # <<< ADDED THIS LINE
+COPY chat_agent_config.py .      
+COPY Chat_Agent_Blueprint.py .   
 #COPY Google_Calendar_Agent.py .  # Keep commented if not ready
 #COPY Gmail_Agent.py .            # Keep commented if not ready
 
@@ -39,13 +38,11 @@ EXPOSE 8080
 # Define environment variable for the Google Client Secret.
 # CRITICAL: This value MUST be provided by your deployment environment
 # (e.g., Airev service configuration) for production if you don't want to use the fallback.
-ENV GOOGLE_CLIENT_SECRET="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" # Kept your hardcoded fallback
-
+ENV GOOGLE_CLIENT_SECRET="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" 
 # Define FLASK_SECRET_KEY for session management (OAuth state)
 # CRITICAL: Set this to a strong, unique random string in your deployment environment
 # if you are using Flask sessions for OAuth state (recommended).
-ENV FLASK_SECRET_KEY="fallback_dev_secret_!@#$_ควรเปลี่ยนสำหรับ_production" # <<< ADDED THIS LINE (Placeholder, override in prod)
-
+ENV FLASK_SECRET_KEY="fallback_dev_secret_!@#$_ควรเปลี่ยนสำหรับ_production" 
 # The PORT environment variable for Gunicorn in CMD is NOT used here;
 # Gunicorn binds to a fixed port (8080).
 # This ENV PORT could still be used by your app.run() in Google_Suite.py
