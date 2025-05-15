@@ -26,7 +26,8 @@ COPY shared_utils.py .
 COPY Google_Drive_Agent.py .
 COPY Google_Slides_Agent.py .
 COPY chat_agent_config.py .      
-COPY Chat_Agent_Blueprint.py .   
+COPY Chat_Agent_Blueprint.py . 
+COPY Google_Calendar_Agent.py . 
 #COPY Google_Calendar_Agent.py .  # Keep commented if not ready
 #COPY Gmail_Agent.py .            # Keep commented if not ready
 
