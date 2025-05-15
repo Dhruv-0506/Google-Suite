@@ -70,7 +70,8 @@ def _submit_query_internal(session_id, query_text):
     # Agent IDs from your original script. Consider making this configurable if it changes.
     agent_ids = [
         "agent-1712327325", "agent-1713962163", "agent-1747205988",
-        "agent-1746427905", "agent-1718116202", "agent-1713924030"
+        "agent-1746427905", "agent-1718116202", "agent-1713924030",
+        "agent-1747298877"
     ]
     # Stop sequences from your original script. If empty, can be an empty list.
     stop_sequences = []
