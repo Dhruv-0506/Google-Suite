@@ -186,7 +186,7 @@ def auth_google():
         "docs": "https://www.googleapis.com/auth/documents",
         "drive": "https://www.googleapis.com/auth/drive",
         "slides": "https://www.googleapis.com/auth/presentations",
-        "calendar": "https://www.googleapis.com/auth/calendar.events",
+        "calendar": "https://www.googleapis.com/auth/calendar",
         
         # "gmail": "https://www.googleapis.com/auth/gmail.modify",
         # Add other service scopes here as you create agents for them
