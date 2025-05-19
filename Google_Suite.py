@@ -26,8 +26,8 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # --- Centralized Configuration ---
-app.config['CLIENT_ID'] = "26763482887-coiufpukc1l69aaulaiov5o0u3en2del.apps.googleusercontent.com"
-app.config['CLIENT_SECRET'] = os.getenv("GOOGLE_CLIENT_SECRET", "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")
+app.config['CLIENT_ID'] = "GOOGLE_CLIENT_ID"
+app.config['CLIENT_SECRET'] = os.getenv("GOOGLE_CLIENT_SECRET")
 app.config['TOKEN_URL'] = "https://oauth2.googleapis.com/token"
 app.config['REQUEST_TIMEOUT_SECONDS'] = 30
 app.config['UNIFIED_REDIRECT_URI'] = "https://serverless.on-demand.io/apps/googlesuite/auth/callback"
