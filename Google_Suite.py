@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # --- Centralized Configuration ---
-app.config['CLIENT_ID'] = "GOOGLE_CLIENT_ID"
+app.config['CLIENT_ID'] = os.getenv("GOOGLE_CLIENT_ID")
 app.config['CLIENT_SECRET'] = os.getenv("GOOGLE_CLIENT_SECRET")
 app.config['TOKEN_URL'] = "https://oauth2.googleapis.com/token"
 app.config['REQUEST_TIMEOUT_SECONDS'] = 30
