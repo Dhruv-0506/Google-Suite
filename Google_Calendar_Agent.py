@@ -194,7 +194,7 @@ def api_update_event(service, calendar_id, event_id, update_body):
         raise
 
 # --- Helper function for date parsing ---
-def parse_datetime_to_iso(datetime_str, prefer_future=True, default_timezone='UTC', settings_override=None):
+def parse_datetime_to_iso(datetime_str, prefer_future=True, default_timezone='GST', settings_override=None):
     if not datetime_str:
         return None
     
