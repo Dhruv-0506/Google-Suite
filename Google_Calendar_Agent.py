@@ -277,7 +277,7 @@ def create_event_endpoint():
         data = request.json
         if 'refresh_token' not in data:
             return jsonify({"success": False, "error": "Missing 'refresh_token'"}), 400
-        refresh_token = data['refresh_token']
+        
 
         if 'summary' not in data or not data['summary']: # Summary is required
             return jsonify({"success": False, "error": "Event 'summary' is required."}), 400
@@ -409,7 +409,7 @@ def update_event_endpoint():
             return jsonify({"success": False, "error": "Missing 'event_id' or 'refresh_token'"}), 400
 
         event_id = data['event_id']
-        refresh_token = data['refresh_token']
+     
         calendar_id = data.get('calendar_id', 'primary')
 
         update_payload = {}
@@ -485,7 +485,7 @@ def delete_event_endpoint():
             return jsonify({"success": False, "error": "Missing 'event_id' or 'refresh_token'"}), 400
         
         event_id = data['event_id']
-        refresh_token = data['refresh_token']
+        
         calendar_id = data.get('calendar_id', 'primary')
 
         access_token = get_access_token(refresh_token, current_app.config.get('CLIENT_ID'), current_app.config.get('CLIENT_SECRET'))
