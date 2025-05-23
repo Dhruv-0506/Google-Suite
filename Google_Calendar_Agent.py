@@ -80,17 +80,15 @@ def api_create_event(service, calendar_id="primary", summary=None, description=N
                      start_datetime_iso=None, end_datetime_iso=None,
                      start_date_iso=None, end_date_iso=None,  # For all-day events
                      attendees=None, location=None, timezone=None,
-                     recurrence_rules=None, color_id=None):
+                     recurrence_rules=None, color_id=None): # <<< MODIFIED: Added color_id
     """
     Creates an event, potentially recurring, and with a specific color.
     recurrence_rules: A list of strings, e.g., ["RRULE:FREQ=WEEKLY;BYDAY=MO;UNTIL=20241231T235959Z"]
     color_id: String from "1" to "11". If None, calendar's default color is used.
-    timezone: IANA timezone string for timed events.
     """
     logger.info(f"API: Creating event '{summary}' on calendar '{calendar_id}'" +
                 (" with recurrence." if recurrence_rules else ".") +
-                (f" with colorId '{color_id}'." if color_id else ".") +
-                (f" with timezone '{timezone}'." if timezone else "."))
+                (f" with colorId '{color_id}'." if color_id else "."))
     event_body = {}
     if summary: event_body['summary'] = summary
     if description: event_body['description'] = description
@@ -119,7 +117,7 @@ def api_create_event(service, calendar_id="primary", summary=None, description=N
         event_body['recurrence'] = recurrence_rules
         logger.info(f"Adding recurrence rules: {recurrence_rules}")
 
-    if color_id:
+    if color_id: # <<< ADDED: Handle color_id
         event_body['colorId'] = str(color_id) # Ensure it's a string
 
     try:
@@ -153,6 +151,7 @@ def api_delete_event(service, calendar_id="primary", event_id=None):
         logger.error(f"API: Generic error deleting event: {str(e)}", exc_info=True)
         raise
 
+# <<< NEW FUNCTION >>>
 def api_update_event(service, calendar_id, event_id, update_body):
     """
     Updates an existing event using the patch method.
@@ -165,6 +164,8 @@ def api_update_event(service, calendar_id, event_id, update_body):
         raise ValueError("event_id is required to update an event.")
     if not update_body:
         logger.warning("API: Update event called with empty update_body. No changes will be made by this call.")
+        # Fetching event to return current state, or could raise an error.
+        # For now, let the API call proceed if desired, though endpoint should prevent empty body.
         try:
             event = service.events().get(calendarId=calendar_id, eventId=event_id).execute()
             return event # Return the event as is
@@ -174,6 +175,8 @@ def api_update_event(service, calendar_id, event_id, update_body):
 
 
     try:
+        # If colorId is explicitly set to None in update_body, it means reset to default.
+        # The API handles `colorId: null` correctly.
         updated_event = service.events().patch(
             calendarId=calendar_id,
             eventId=event_id,
@@ -200,26 +203,15 @@ def parse_datetime_to_iso(datetime_str, prefer_future=True, default_timezone='UT
     if settings_override and isinstance(settings_override, dict):
         settings.update(settings_override)
     
-    if 'TIMEZONE' not in settings: # This will be set if settings_override contains TIMEZONE
-        settings['TIMEZONE'] = default_timezone # Fallback if not specified in settings_override
-        logger.debug(f"Dateparser: Using fallback timezone '{default_timezone}' for parsing '{datetime_str}'.")
-    else:
-        logger.debug(f"Dateparser: Using provided timezone '{settings['TIMEZONE']}' for parsing '{datetime_str}'.")
-
+    if 'TIMEZONE' not in settings:
+        settings['TIMEZONE'] = default_timezone
+        logger.debug(f"Dateparser: Using timezone '{default_timezone}' for parsing '{datetime_str}'.")
 
     parsed_dt = dateparser.parse(datetime_str, settings=settings)
     if parsed_dt:
         if parsed_dt.tzinfo is None or parsed_dt.tzinfo.utcoffset(parsed_dt) is None:
-            logger.warning(f"Parsed datetime '{datetime_str}' as naive datetime '{parsed_dt}' despite settings. Assuming UTC based on default_timezone or original intention.")
-            # Attempt to localize to the intended timezone, or UTC if that fails/was the intention
-            try:
-                import pytz
-                intended_tz_str = settings.get('TIMEZONE', default_timezone)
-                intended_tz = pytz.timezone(intended_tz_str)
-                parsed_dt = intended_tz.localize(parsed_dt, is_dst=None) # is_dst=None handles ambiguous times
-            except Exception as tz_err:
-                logger.error(f"Could not localize naive datetime to '{intended_tz_str}', falling back to UTC: {tz_err}")
-                parsed_dt = parsed_dt.replace(tzinfo=datetime.timezone.utc)
+            logger.warning(f"Parsed datetime '{datetime_str}' as naive datetime '{parsed_dt}' despite settings. Assuming UTC.")
+            parsed_dt = parsed_dt.replace(tzinfo=datetime.timezone.utc)
         return parsed_dt.isoformat()
     else:
         logger.warning(f"Could not parse datetime string: '{datetime_str}'")
@@ -250,32 +242,20 @@ def list_events_endpoint():
         time_min_natural = data.get('time_min_natural')
         time_max_natural = data.get('time_max_natural')
         date_natural = data.get('date_natural')
-        user_timezone = data.get('user_timezone', 'UTC') # For list, user_timezone is optional for flexibility
+        user_timezone = data.get('user_timezone', 'UTC')
 
         time_min_iso, time_max_iso = None, None
         dp_settings_for_range = {'TIMEZONE': user_timezone, 'RETURN_AS_TIMEZONE_AWARE': True}
 
         if date_natural:
             logger.info(f"Parsing date_natural for list: '{date_natural}' with timezone '{user_timezone}'")
-            # For full day, we parse it then explicitly set H:M:S to cover the whole day in that timezone
-            parsed_date_object_local = dateparser.parse(date_natural, settings={'TIMEZONE': user_timezone, 'PREFER_DATES_FROM': 'future'})
-            if parsed_date_object_local:
-                 # Ensure it's timezone-aware using the user_timezone
-                if parsed_date_object_local.tzinfo is None:
-                    import pytz
-                    try:
-                        tz_obj = pytz.timezone(user_timezone)
-                        parsed_date_object_local = tz_obj.localize(parsed_date_object_local.replace(tzinfo=None))
-                    except Exception: # Fallback to UTC if user_timezone is invalid
-                        logger.warning(f"Invalid user_timezone '{user_timezone}' for date_natural. Falling back to UTC.")
-                        parsed_date_object_local = parsed_date_object_local.replace(tzinfo=datetime.timezone.utc)
-
-                start_of_day_local = parsed_date_object_local.replace(hour=0, minute=0, second=0, microsecond=0)
-                end_of_day_local = parsed_date_object_local.replace(hour=23, minute=59, second=59, microsecond=999999)
-                
-                time_min_iso = start_of_day_local.isoformat() # Already timezone aware
-                time_max_iso = end_of_day_local.isoformat() # Already timezone aware
-                logger.info(f"Querying events for full day: {date_natural} (Local: {time_min_iso} to {time_max_iso})")
+            parsed_date_local = dateparser.parse(date_natural, settings={'TIMEZONE': user_timezone, 'PREFER_DATES_FROM': 'future'})
+            if parsed_date_local:
+                start_of_day_local = parsed_date_local.replace(hour=0, minute=0, second=0, microsecond=0)
+                end_of_day_local = parsed_date_local.replace(hour=23, minute=59, second=59, microsecond=999999)
+                time_min_iso = start_of_day_local.astimezone(datetime.timezone.utc).isoformat()
+                time_max_iso = end_of_day_local.astimezone(datetime.timezone.utc).isoformat()
+                logger.info(f"Querying events for full day: {date_natural} (UTC: {time_min_iso} to {time_max_iso})")
             else:
                 return jsonify({"success": False, "error": f"Could not understand the date: '{date_natural}'"}), 400
         else:
@@ -286,18 +266,16 @@ def list_events_endpoint():
                 time_max_iso = parse_datetime_to_iso(time_max_natural, prefer_future=True, settings_override=dp_settings_for_range)
                 if not time_max_iso: return jsonify({"success": False, "error": f"Could not understand end time: '{time_max_natural}'"}), 400
         
-        if not time_min_iso and not date_natural: # if no date_natural and no time_min_natural, default to start of today
-            now_local = datetime.datetime.now(dateutil.tz.gettz(user_timezone) if user_timezone != 'UTC' else datetime.timezone.utc)
-            time_min_iso = now_local.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-        
-        if not time_max_iso and not date_natural: # if no date_natural and no time_max_natural, default to end of day for time_min_iso
-            parsed_time_min = dateparser.parse(time_min_iso) # time_min_iso is already timezone aware
-            if parsed_time_min:
-                 time_max_iso = parsed_time_min.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
-            else: # Should not happen if time_min_iso was set
-                 now_local = datetime.datetime.now(dateutil.tz.gettz(user_timezone) if user_timezone != 'UTC' else datetime.timezone.utc)
-                 time_max_iso = now_local.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
-
+        if not time_min_iso:
+            now_utc = datetime.datetime.now(datetime.timezone.utc)
+            time_min_iso = now_utc.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        if not time_max_iso:
+            start_dt = dateparser.parse(time_min_iso)
+            if start_dt:
+                 time_max_iso = start_dt.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
+            else:
+                 now_utc = datetime.datetime.now(datetime.timezone.utc)
+                 time_max_iso = now_utc.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
 
         access_token = get_access_token(refresh_token, current_app.config['CLIENT_ID'], current_app.config['CLIENT_SECRET'])
         service = get_calendar_service(access_token)
@@ -314,25 +292,19 @@ def create_event_endpoint():
     endpoint_name = "/calendar/event/create"; logger.info(f"ENDPOINT {endpoint_name}: Request received.")
     try:
         data = request.json
-        # --- MODIFIED: Validate required fields including timezone ---
-        if 'refresh_token' not in data: 
-            return jsonify({"success": False, "error": "Missing 'refresh_token'"}), 400
-        if 'summary' not in data or not data['summary']: 
-            return jsonify({"success": False, "error": "Event 'summary' (name) is required."}), 400
-        if 'timezone' not in data or not data['timezone']: # Check for presence and non-empty
-            return jsonify({"success": False, "error": "Parameter 'timezone' is required and cannot be empty."}), 400
-        
+        if 'refresh_token' not in data: return jsonify({"success": False, "error": "Missing 'refresh_token'"}), 400
         refresh_token = data['refresh_token']
-        summary = data['summary']
-        event_timezone = data['timezone'] # Now guaranteed to be present
-        # --- END MODIFICATION ---
         
         calendar_id = data.get('calendar_id', 'primary')
+        summary = data.get('summary')
+        if not summary: return jsonify({"success": False, "error": "Event 'summary' (name) is required."}), 400
+        
         description = data.get('description')
         location = data.get('location')
         attendees_emails = data.get('attendees')
+        event_timezone = data.get('timezone')
         recurrence_rules = data.get('recurrence_rules')
-        color_input = data.get('color')
+        color_input = data.get('color') # <<< ADDED: Get color input (name or ID)
 
         start_natural = data.get('start_natural')
         end_natural = data.get('end_natural')
@@ -342,83 +314,71 @@ def create_event_endpoint():
         start_datetime_iso, end_datetime_iso = None, None
         start_date_iso, end_date_iso = None, None
         
-        # --- MODIFIED: Use event_timezone directly for dateparser settings ---
-        dp_settings = {
-            'PREFER_DATES_FROM': 'future', 
-            'RETURN_AS_TIMEZONE_AWARE': True,
-            'TIMEZONE': event_timezone # Directly use the required timezone
-        }
-        logger.info(f"Event creation: Using provided timezone '{event_timezone}' for parsing natural language dates/times.")
-        # --- END MODIFICATION ---
+        dp_settings = {'PREFER_DATES_FROM': 'future', 'RETURN_AS_TIMEZONE_AWARE': True}
+        if event_timezone:
+            dp_settings['TIMEZONE'] = event_timezone
+            logger.info(f"Event creation: Using timezone '{event_timezone}' for parsing natural language dates/times.")
+        else:
+            dp_settings['TIMEZONE'] = 'UTC'
+            logger.warning(f"No event 'timezone' provided, parsing datetimes as UTC.")
 
         if start_natural:
             start_datetime_iso = parse_datetime_to_iso(start_natural, settings_override=dp_settings)
             if not start_datetime_iso:
-                return jsonify({"success": False, "error": f"Could not understand start time: '{start_natural}' with timezone '{event_timezone}'"}), 400
+                return jsonify({"success": False, "error": f"Could not understand start time: '{start_natural}'"}), 400
             
             if end_natural:
                 end_datetime_iso = parse_datetime_to_iso(end_natural, settings_override=dp_settings)
                 if not end_datetime_iso:
-                    return jsonify({"success": False, "error": f"Could not understand end time: '{end_natural}' with timezone '{event_timezone}'"}), 400
-            else: # Default to 1 hour duration if end_natural is not provided
-                parsed_start_dt = dateparser.parse(start_natural, settings=dp_settings) # Re-parse to get datetime object
+                    return jsonify({"success": False, "error": f"Could not understand end time: '{end_natural}'"}), 400
+            else:
+                parsed_start_dt = dateparser.parse(start_natural, settings=dp_settings)
                 if parsed_start_dt:
-                    # Ensure parsed_start_dt is timezone-aware (should be due to RETURN_AS_TIMEZONE_AWARE)
-                    if parsed_start_dt.tzinfo is None or parsed_start_dt.tzinfo.utcoffset(parsed_start_dt) is None:
-                         import pytz # Ensure pytz is available
-                         tz_obj = pytz.timezone(event_timezone)
-                         parsed_start_dt = tz_obj.localize(parsed_start_dt.replace(tzinfo=None))
-
                     parsed_end_dt = parsed_start_dt + datetime.timedelta(hours=1)
                     end_datetime_iso = parsed_end_dt.isoformat()
                     logger.info(f"No end_natural provided, defaulting to 1 hour duration. End: {end_datetime_iso}")
-                else: # Should not happen if parse_datetime_to_iso succeeded
-                    return jsonify({"success": False, "error": "Cannot determine end time as start time was unparseable for duration calculation."}), 400
+                else:
+                    return jsonify({"success": False, "error": "Cannot determine end time as start time was unparseable."}), 400
         
-        elif start_date_natural: # All-day event
-            # For all-day events, the specific timezone for parsing the date string itself is less critical than for timed events,
-            # but using dp_settings maintains consistency. Google Calendar handles all-day events without explicit timezones in the 'date' field.
-            parsed_start_date = dateparser.parse(start_date_natural, settings={'PREFER_DATES_FROM': 'future', 'TIMEZONE': event_timezone}) # Use event_timezone for consistency
+        elif start_date_natural:
+            parsed_start_date = dateparser.parse(start_date_natural, settings={'PREFER_DATES_FROM': 'future'})
             if not parsed_start_date:
                 return jsonify({"success": False, "error": f"Could not understand start date: '{start_date_natural}'"}), 400
             start_date_iso = parsed_start_date.strftime('%Y-%m-%d')
 
             if end_date_natural:
-                parsed_end_date = dateparser.parse(end_date_natural, settings={'PREFER_DATES_FROM': 'future', 'TIMEZONE': event_timezone})
+                parsed_end_date = dateparser.parse(end_date_natural, settings={'PREFER_DATES_FROM': 'future'})
                 if not parsed_end_date:
                     return jsonify({"success": False, "error": f"Could not understand end date: '{end_date_natural}'"}), 400
-                # For Google Calendar's all-day events, end date is exclusive.
-                # If user means "ends on X", it means the event *includes* day X.
-                # So, if they say "ends on May 10th", end date for API should be "May 11th".
-                end_date_iso = (parsed_end_date.replace(hour=0,minute=0,second=0,microsecond=0) + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
-            else: # Single all-day event
+                if parsed_end_date.hour == 0 and parsed_end_date.minute == 0 and parsed_end_date.second == 0:
+                     end_date_iso = (parsed_end_date + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+                else:
+                     end_date_iso = (parsed_end_date.replace(hour=0,minute=0,second=0,microsecond=0) + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+            else:
                 end_date_iso = (parsed_start_date.replace(hour=0,minute=0,second=0,microsecond=0) + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
-            
-            # For all-day events, the 'timezone' parameter passed to api_create_event should be None
-            # as it applies to 'dateTime' fields, not 'date' fields.
-            api_event_timezone_param = None
+            event_timezone = None
         else:
             return jsonify({"success": False, "error": "Must provide natural language for (start & end times) or (start date for all-day event)."}), 400
         
-        # Determine the timezone to pass to the Google API for timed events
-        # For all-day events, this should be None.
-        api_event_timezone_param = event_timezone if (start_datetime_iso and end_datetime_iso) else None
-
         attendees_list = None
         if isinstance(attendees_emails, list):
             attendees_list = [{'email': email} for email in attendees_emails if isinstance(email, str)]
 
+        # <<< ADDED: Process color input >>>
         color_id_for_api = None
         if color_input:
             if isinstance(color_input, str) and color_input.lower() in EVENT_COLOR_MAP:
                 color_id_for_api = EVENT_COLOR_MAP[color_input.lower()]
             elif isinstance(color_input, str) and color_input.isdigit() and 1 <= int(color_input) <= 11:
                 color_id_for_api = str(color_input)
-            elif color_input is None and "default" in EVENT_COLOR_MAP:
+            elif color_input is None and "default" in EVENT_COLOR_MAP: # Explicit "default" or null maps to None
                  color_id_for_api = EVENT_COLOR_MAP["default"]
             else:
                 logger.warning(f"Invalid color input '{color_input}'. Using default calendar color. Supported: {list(EVENT_COLOR_MAP.keys())} or IDs 1-11.")
-        
+                # Optionally, return an error:
+                # return jsonify({"success": False, "error": f"Invalid color: '{color_input}'. Supported colors are: {list(EVENT_COLOR_MAP.keys())} or IDs 1-11."}), 400
+        # If color_id_for_api is None (e.g., for "default" or if not provided), it won't be sent to API, which is correct.
+
         access_token = get_access_token(refresh_token, current_app.config['CLIENT_ID'], current_app.config['CLIENT_SECRET'])
         service = get_calendar_service(access_token)
         
@@ -426,9 +386,9 @@ def create_event_endpoint():
                                          start_datetime_iso, end_datetime_iso,
                                          start_date_iso, end_date_iso,
                                          attendees_list, location,
-                                         api_event_timezone_param, # Use determined timezone for API call
+                                         event_timezone if (start_datetime_iso and end_datetime_iso) else None,
                                          recurrence_rules,
-                                         color_id_for_api)
+                                         color_id_for_api) # <<< MODIFIED: Pass resolved color_id
         return jsonify({"success": True, "message": "Event created successfully.", "event": created_event})
     except Exception as e:
         logger.error(f"ENDPOINT {endpoint_name}: Exception: {str(e)}", exc_info=True)
@@ -456,6 +416,7 @@ def delete_event_endpoint():
         error_details = e.content.decode('utf-8') if isinstance(e, HttpError) and hasattr(e,'content') and e.content else str(e)
         return jsonify({"success": False, "error": "Failed to delete event", "details": error_details}), status_code
 
+# <<< NEW ENDPOINT for updating events, including color >>>
 @calendar_bp.route('/event/update', methods=['POST'])
 def update_event_endpoint():
     endpoint_name = "/calendar/event/update"; logger.info(f"ENDPOINT {endpoint_name}: Request received.")
@@ -468,39 +429,47 @@ def update_event_endpoint():
         refresh_token = data['refresh_token']
         calendar_id = data.get('calendar_id', 'primary')
 
-        update_payload = {} 
+        update_payload = {} # This will be the body for the patch request
 
+        # --- Color update logic ---
+        # Process color only if 'color' key is present in the request data
         if 'color' in data:
             color_value = data['color']
             if color_value is None or (isinstance(color_value, str) and color_value.lower() == "default"):
-                update_payload['colorId'] = None 
+                # Setting colorId to None API-side resets it to the calendar's default.
+                update_payload['colorId'] = None # This will be sent as null in JSON
             elif isinstance(color_value, str) and color_value.lower() in EVENT_COLOR_MAP:
                 resolved_color_id = EVENT_COLOR_MAP[color_value.lower()]
-                if resolved_color_id is None: 
+                if resolved_color_id is None: # Handles case where "default" maps to None directly
                     update_payload['colorId'] = None
                 else:
                     update_payload['colorId'] = str(resolved_color_id)
             elif isinstance(color_value, str) and color_value.isdigit() and 1 <= int(color_value) <= 11:
                 update_payload['colorId'] = str(color_value)
             else:
+                # Invalid color value provided
                 valid_colors_msg = f"Supported colors: {', '.join(k for k in EVENT_COLOR_MAP.keys() if k != 'default')}, IDs 1-11, 'default', or null to reset."
                 return jsonify({"success": False, "error": f"Invalid color value: '{color_value}'. {valid_colors_msg}"}), 400
 
+        # --- Add other updatable fields here as needed ---
         if 'summary' in data:
             update_payload['summary'] = data['summary']
-        if 'description' in data: # Allows setting description to null/empty to clear it
+        if 'description' in data:
             update_payload['description'] = data['description']
-        if 'location' in data: # Allows setting location to null/empty to clear it
+        if 'location' in data:
             update_payload['location'] = data['location']
         
-        # Note: Updating timezone, start/end times, attendees, recurrence in the update endpoint
-        # would require more complex logic similar to the create endpoint, including natural language parsing
-        # and handling of event_timezone. The current simplified update does not fully support these.
-        # If 'timezone' is provided in data for update, it's currently ignored unless tied to start/end time updates.
-        # The OpenAPI schema reflects this limitation for 'timezone' in update.
+        # Add logic for start/end times, attendees, recurrence if they need to be updatable
+        # Example for start/end (would need parsing similar to create_event_endpoint):
+        # if 'start_natural' in data or 'end_natural' in data:
+        #     # ... (complex parsing and ISO conversion logic) ...
+        #     # update_payload['start'] = {'dateTime': start_iso, 'timeZone': event_tz}
+        #     # update_payload['end'] = {'dateTime': end_iso, 'timeZone': event_tz}
+        #     pass
+
 
         if not update_payload:
-            return jsonify({"success": False, "error": "No valid fields provided for update. Please provide 'color', 'summary', 'description', 'location', etc."}), 400
+            return jsonify({"success": False, "error": "No valid fields provided for update. Please provide 'color', 'summary', 'description', etc."}), 400
 
         access_token = get_access_token(refresh_token, current_app.config['CLIENT_ID'], current_app.config['CLIENT_SECRET'])
         service = get_calendar_service(access_token)
